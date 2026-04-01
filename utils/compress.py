@@ -26,52 +26,59 @@ def _find_gs() -> str:
 # ── 第一段：pymupdf + Pillow 圖片預處理 ──────────────────────────────────────
 def _preprocess_images(input_bytes: bytes, dpi: int, img_quality: int) -> bytes:
     """
-    把 PDF 內嵌圖片抽出來，用 Pillow 重壓成 JPEG，再寫回 PDF。
+    把 PDF 內嵌圖片抽出來，用 Pillow 重壓，再用 pixmap 正確寫回。
     無法處理的圖片直接跳過，不會讓整個流程爆掉。
     """
     doc = fitz.open(stream=input_bytes, filetype="pdf")
 
+    # 收集所有不重複的 xref
+    xrefs_seen = set()
     for page in doc:
-        image_list = page.get_images(full=True)
-        for img_info in image_list:
-            xref = img_info[0]
-            try:
-                base_image = doc.extract_image(xref)
-                img_bytes  = base_image["image"]
-                colorspace = base_image["colorspace"]  # 1=gray, 3=rgb, 4=cmyk
+        for img_info in page.get_images(full=True):
+            xrefs_seen.add(img_info[0])
 
-                img = Image.open(io.BytesIO(img_bytes))
+    for xref in xrefs_seen:
+        try:
+            base_image = doc.extract_image(xref)
+            img_bytes  = base_image["image"]
+            ext        = base_image["ext"]  # jpeg / png / jp2 ...
 
-                # CMYK 轉 RGB 避免 JPEG 存檔問題
-                if img.mode == "CMYK":
-                    img = img.convert("RGB")
-                elif img.mode == "P":
-                    img = img.convert("RGB")
-                elif img.mode == "RGBA":
-                    # 白底合併 alpha
-                    bg = Image.new("RGB", img.size, (255, 255, 255))
-                    bg.paste(img, mask=img.split()[3])
-                    img = bg
-
-                # 縮小解析度
-                orig_w, orig_h = img.size
-                scale = dpi / 150  # 以 150 為基準縮放
-                if scale < 1.0:
-                    new_w = max(1, int(orig_w * scale))
-                    new_h = max(1, int(orig_h * scale))
-                    img = img.resize((new_w, new_h), Image.LANCZOS)
-
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=img_quality, optimize=True)
-                new_bytes = buf.getvalue()
-
-                # 只有真的變小才換
-                if len(new_bytes) < len(img_bytes):
-                    doc.update_stream(xref, new_bytes)
-
-            except Exception:
-                # 單張圖失敗不影響整體
+            # 不處理遮罩、向量等特殊類型
+            if ext not in ("jpeg", "jpg", "png", "bmp", "tiff", "jp2"):
                 continue
+
+            img = Image.open(io.BytesIO(img_bytes))
+
+            # 統一轉成 RGB（JPEG 不支援 CMYK/P/RGBA）
+            if img.mode == "CMYK":
+                img = img.convert("RGB")
+            elif img.mode == "P":
+                img = img.convert("RGB")
+            elif img.mode == "RGBA":
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[3])
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+
+            # 縮小解析度（只縮不放大）
+            scale = dpi / 150
+            if scale < 1.0:
+                new_w = max(1, int(img.width * scale))
+                new_h = max(1, int(img.height * scale))
+                img = img.resize((new_w, new_h), Image.LANCZOS)
+
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=img_quality, optimize=True)
+            new_bytes = buf.getvalue()
+
+            # 只有真的變小才換，用 pixmap 正確替換避免 colorspace 錯亂
+            if len(new_bytes) < len(img_bytes):
+                pix = fitz.Pixmap(io.BytesIO(new_bytes))
+                doc.replace_image(xref, pixmap=pix)
+
+        except Exception:
+            continue
 
     result = doc.tobytes(deflate=True, garbage=4)
     doc.close()
