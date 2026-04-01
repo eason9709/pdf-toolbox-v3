@@ -2,3 +2,4 @@ streamlit>=1.32.0
 pikepdf>=8.0.0
 Pillow>=10.0.0
 pymupdf>=1.23.0
+streamlit-sortables>=0.2.0

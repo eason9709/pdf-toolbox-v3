@@ -17,17 +17,56 @@ def merge_pdfs(files_bytes: list[bytes]) -> bytes:
 
 
 # ── 2. 拆分 PDF ───────────────────────────────────────────────────────────────
-def split_pdf(input_bytes: bytes) -> list[tuple[str, bytes]]:
-    """回傳 [(filename, bytes), ...] 每頁一個檔"""
+def _extract_pages(pdf: pikepdf.Pdf, page_indices: list[int]) -> bytes:
+    """從 pdf 抽出指定頁碼（0-based）存成 bytes"""
+    out = pikepdf.Pdf.new()
+    for i in page_indices:
+        out.pages.append(pdf.pages[i])
+    buf = io.BytesIO()
+    out.save(buf)
+    return buf.getvalue()
+
+
+def split_pdf_every_page(input_bytes: bytes) -> list[tuple[str, bytes]]:
+    """每頁拆成一個檔"""
     results = []
     with pikepdf.open(io.BytesIO(input_bytes)) as pdf:
         total = len(pdf.pages)
-        for i, page in enumerate(pdf.pages):
-            single = pikepdf.Pdf.new()
-            single.pages.append(page)
-            buf = io.BytesIO()
-            single.save(buf)
-            results.append((f"page_{i+1:03d}_of_{total}.pdf", buf.getvalue()))
+        for i in range(total):
+            data = _extract_pages(pdf, [i])
+            results.append((f"page_{i+1:03d}_of_{total}.pdf", data))
+    return results
+
+
+def split_pdf_by_interval(input_bytes: bytes, interval: int) -> list[tuple[str, bytes]]:
+    """每隔 interval 頁拆一個檔，例如 interval=3 → 1-3, 4-6, ..."""
+    results = []
+    with pikepdf.open(io.BytesIO(input_bytes)) as pdf:
+        total = len(pdf.pages)
+        for start in range(0, total, interval):
+            end = min(start + interval, total)
+            indices = list(range(start, end))
+            data = _extract_pages(pdf, indices)
+            results.append((f"pages_{start+1:03d}-{end:03d}.pdf", data))
+    return results
+
+
+def split_pdf_by_ranges(input_bytes: bytes, ranges: list[tuple[int, int]]) -> list[tuple[str, bytes]]:
+    """
+    依自訂範圍拆分，ranges 為 [(start, end), ...] 1-based inclusive。
+    例如 [(1,3),(5,8)] → 第1-3頁、第5-8頁各一個檔
+    """
+    results = []
+    with pikepdf.open(io.BytesIO(input_bytes)) as pdf:
+        total = len(pdf.pages)
+        for s, e in ranges:
+            s = max(1, s)
+            e = min(total, e)
+            if s > e:
+                continue
+            indices = list(range(s - 1, e))
+            data = _extract_pages(pdf, indices)
+            results.append((f"pages_{s:03d}-{e:03d}.pdf", data))
     return results
 
 
