@@ -11,6 +11,7 @@ from PIL import Image
 # Ghostscript preset mapping
 QUALITY_PRESETS = {
     "高品質 (150 DPI)":  {"preset": "/ebook",  "dpi": 150, "img_quality": 85},
+    "標準 (120 DPI)":    {"preset": "/ebook",  "dpi": 120, "img_quality": 80},
     "平衡 (96 DPI)":     {"preset": "/ebook",  "dpi": 96,  "img_quality": 75},
     "最小化 (72 DPI)":   {"preset": "/screen", "dpi": 72,  "img_quality": 60},
 }
